@@ -207,7 +207,7 @@ int main(int argc, char* argv[])
     //free memory
     cudaFree(&A_d);
     cudaFree(&Anew);
-    cudaFree(&max); cudaFree(&d_error);
+    cudaFree(&max); cudaFree(&d_error); cudaFree(&d_tempStorage);
 
     return 0;
 }
