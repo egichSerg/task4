@@ -64,12 +64,6 @@ __global__ void iterateMatrix(double* A, double* Anew, int netSize)
     Anew[i] = 0.25 * (A[i - netSize] + A[i + netSize] + A[i - 1] + A[i + 1]);
 }
 
-__global__ void copyArray(double* arg1, double* arg2)
-{
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    arg1[i] = arg2[i];
-}
-
 //applied to two matrices to find difference. Writes result to a new array
 __global__ void findDifference(double* A, double* Anew, double* result)
 {
