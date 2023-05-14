@@ -1,4 +1,4 @@
-﻿#include "cuda_runtime.h"
+#include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 
 #include <stdio.h>
@@ -70,12 +70,12 @@ __global__ void copyArray(double* arg1, double* arg2)
     arg1[i] = arg2[i];
 }
 
-//applied to two matrices to find difference. Writes result to first matrix
-__global__ void findDifference(double* A, double* Anew)
+//applied to two matrices to find difference. Writes result to a new array
+__global__ void findDifference(double* A, double* Anew, double* result)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
 
-    A[i] = ABS(Anew[i] - A[i]);
+    result[i] = ABS(Anew[i] - A[i]);
 }
 
 //swaps pointers on device
@@ -167,8 +167,7 @@ int main(int argc, char* argv[])
         if (iteration % 100 == 0) {
             
             //finding max error (max difference element from matrix A_d and Anew)
-            copyArray <<< blockNum, threadsPerBlock >>> (max, A_d);
-            findDifference <<< blockNum, threadsPerBlock >>> (max, Anew);
+            findDifference <<< blockNum, threadsPerBlock >>> (A_d, Anew, max);
             cub::DeviceReduce::Max(d_tempStorage, d_tempStorageBytes, max, d_error, netSize * netSize);
 
             //copy error to CPU
@@ -191,8 +190,7 @@ int main(int argc, char* argv[])
     }
 
     //find final error
-    copyArray <<< blockNum, threadsPerBlock >>> (max, A_d);
-    findDifference <<< blockNum, threadsPerBlock >>> (max, Anew);
+    findDifference <<< blockNum, threadsPerBlock >>> (A_d, Anew, max);
     cub::DeviceReduce::Max(d_tempStorage, d_tempStorageBytes, max, d_error, netSize * netSize);
 
     //copy error to CPU
