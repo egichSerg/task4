@@ -145,7 +145,8 @@ int main(int argc, char* argv[])
 
     double error = 10.;
     int iteration = 0;
-    dim3 blockNum = dim3(MAX((int)((netSize * netSize) / threadsPerBlock.x), 1));
+    int xBonus = netSize % threadsPerBlock.x == 0 ? 0 : 1; //additional block if not enough threads
+    dim3 blockNum = dim3(MAX((int)((netSize * netSize) / threadsPerBlock.x), 1) + xBonus);
 
     //main loop
     while (error > minError && iteration < maxIterations)
