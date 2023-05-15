@@ -133,7 +133,7 @@ int main(int argc, char* argv[])
     //finding size of memory need to be allocated to d_tempStorage
     void* d_tempStorage = NULL;
     size_t d_tempStorageBytes = 0;
-    cub::DeviceReduce::Max(d_tempStorage, d_tempStorageBytes, max, d_error, netSize*netSize);
+    gpuErrchk( cub::DeviceReduce::Max(d_tempStorage, d_tempStorageBytes, max, d_error, netSize*netSize), A_h, Anew, A_d, max);
 
     //allocating memory to d_tempStorage
     gpuErrchk( cudaMalloc(&d_tempStorage, d_tempStorageBytes), A_h, Anew, A_d, max);
@@ -163,7 +163,7 @@ int main(int argc, char* argv[])
             
             //finding max error (max difference element from matrix A_d and Anew)
             findDifference <<< blockNum, threadsPerBlock >>> (A_d, Anew, max);
-            cub::DeviceReduce::Max(d_tempStorage, d_tempStorageBytes, max, d_error, netSize * netSize);
+            gpuErrchk( cub::DeviceReduce::Max(d_tempStorage, d_tempStorageBytes, max, d_error, netSize * netSize), A_h, Anew, A_d, max);
 
             //copy error to CPU
             gpuErrchk( cudaMemcpy(&error, d_error, sizeof(double), cudaMemcpyDeviceToHost), A_h, Anew, A_d, max );
@@ -186,7 +186,7 @@ int main(int argc, char* argv[])
 
     //find final error
     findDifference <<< blockNum, threadsPerBlock >>> (A_d, Anew, max);
-    cub::DeviceReduce::Max(d_tempStorage, d_tempStorageBytes, max, d_error, netSize * netSize);
+    gpuErrchk( cub::DeviceReduce::Max(d_tempStorage, d_tempStorageBytes, max, d_error, netSize * netSize), A_h, Anew, A_d, max);
 
     //copy error to CPU
     gpuErrchk(cudaMemcpy(&error, d_error, sizeof(double), cudaMemcpyDeviceToHost), A_h, Anew, A_d, max);
