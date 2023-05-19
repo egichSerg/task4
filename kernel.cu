@@ -18,7 +18,9 @@ inline void gpuAssert(cudaError_t code, const char* file, int line, double* A, d
     {
         fprintf(stderr, "GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
         free(A);
-        cudaFree(&Anew); cudaFree(&A_d);  cudaFree(&max);
+        if (Anew != NULL) cudaFree(&Anew); 
+        if (A_d != NULL) cudaFree(&A_d);  
+        if (max != NULL) cudaFree(&max);
         if (abort) exit(code);
     }
 }
@@ -30,6 +32,7 @@ __global__ void initMatrix(
 {
     //this functions initializes matrix borders in O(n)
     int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < 0 || i >= netSize*netSize) return;
     A[i * netSize] = vsl * i + tl;
     A[i] = hst * i + tl;
     A[((netSize - 1) - i) * netSize + (netSize - 1)] = vsr * i + br;
@@ -65,9 +68,10 @@ __global__ void iterateMatrix(double* A, double* Anew, int netSize)
 }
 
 //applied to two matrices to find difference. Writes result to a new array
-__global__ void findDifference(double* A, double* Anew, double* result)
+__global__ void findDifference(double* A, double* Anew, double* result, int netSize)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < 0 || i >= netSize*netSize) return;
 
     result[i] = ABS(Anew[i] - A[i]);
 }
@@ -82,6 +86,7 @@ void swapMatrix(double* &A, double* &Anew)
 
 int main(int argc, char* argv[])
 {
+    int threads = 512; //for threadsPerBlock variable
 
     int netSize = 128;
     double minError = 0.000001;
@@ -102,7 +107,7 @@ int main(int argc, char* argv[])
     }
     std::cout << netSize << " " << minError << " " << maxIterations << std::endl;
 
-    dim3 threadsPerBlock = dim3(128);
+    dim3 threadsPerBlock = dim3(threads);
 
     //values of net edges
     const double tl = 10, //top left
@@ -116,10 +121,10 @@ int main(int argc, char* argv[])
         vsr = (tr - br) / (netSize - 1); //vertical step right
 
     double* A_h = (double*)malloc(sizeof(double*) * netSize * netSize);
-    double* A_d;
-    double* Anew;
-    double* max; //actually it meant to be d_diff, but I can't rename it...
-    double* d_error;
+    double* A_d =NULL;
+    double* Anew = NULL;
+    double* max = NULL; //actually it meant to be d_diff, but I can't rename it...
+    double* d_error = NULL;
 
     //allocating memory to A_d, Anew, max
     gpuErrchk( cudaMalloc(&A_d, sizeof(double*) * netSize * netSize), A_h, Anew, A_d, max);
@@ -133,7 +138,7 @@ int main(int argc, char* argv[])
     //finding size of memory need to be allocated to d_tempStorage
     void* d_tempStorage = NULL;
     size_t d_tempStorageBytes = 0;
-    gpuErrchk( cub::DeviceReduce::Max(d_tempStorage, d_tempStorageBytes, max, d_error, netSize*netSize), A_h, Anew, A_d, max);
+    cub::DeviceReduce::Max(d_tempStorage, d_tempStorageBytes, max, d_error, netSize*netSize);
 
     //allocating memory to d_tempStorage
     gpuErrchk( cudaMalloc(&d_tempStorage, d_tempStorageBytes), A_h, Anew, A_d, max);
@@ -148,12 +153,37 @@ int main(int argc, char* argv[])
     int xBonus = netSize % threadsPerBlock.x == 0 ? 0 : 1; //additional block if not enough threads
     dim3 blockNum = dim3(MAX((int)((netSize * netSize) / threadsPerBlock.x), 1) + xBonus);
 
+    //we want to get cuda graph out of kernels
+    bool graphCreated = false;
+    cudaGraph_t graph;
+    cudaGraphExec_t graphInstance;
+    cudaStream_t stream;
+
+    printf("init done!\n");
+
     //main loop
     while (error > minError && iteration < maxIterations)
     {
-        //make iteration and swap matrices
-        iterateMatrix <<< blockNum, threadsPerBlock >>> ( A_d, Anew, netSize );
-        swapMatrix(A_d, Anew);
+
+        if(!graphCreated) {
+            printf("Preparing for the first launch...\n");
+            gpuErrchk( cudaStreamCreate(&stream), A_h, Anew, A_d, max );
+            gpuErrchk( cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal), A_h, Anew, A_d, max );
+
+            //do 100 at time
+            for (int i = 0; i < 100; ++i) {
+                iterateMatrix <<< blockNum, threadsPerBlock, 0, stream >>> ( A_d, Anew, netSize );
+                swapMatrix(A_d, Anew);
+            }
+
+            gpuErrchk( cudaStreamEndCapture(stream, &graph), A_h, Anew, A_d, max );
+            gpuErrchk( cudaGraphInstantiate(&graphInstance, graph, NULL, NULL, 0), A_h, Anew, A_d, max );
+            printf("graph instantiated!\n");
+            graphCreated = true;
+        }
+
+        gpuErrchk( cudaGraphLaunch(graphInstance, stream), A_h, Anew, A_d, max );
+        gpuErrchk( cudaStreamSynchronize(stream), A_h, Anew, A_d, max );
 
         //get an error if happened
         gpuErrchk( cudaGetLastError(), A_h, Anew, A_d, max );
@@ -162,8 +192,8 @@ int main(int argc, char* argv[])
         if (iteration % 100 == 0) {
             
             //finding max error (max difference element from matrix A_d and Anew)
-            findDifference <<< blockNum, threadsPerBlock >>> (A_d, Anew, max);
-            gpuErrchk( cub::DeviceReduce::Max(d_tempStorage, d_tempStorageBytes, max, d_error, netSize * netSize), A_h, Anew, A_d, max);
+            findDifference <<< blockNum, threadsPerBlock >>> (A_d, Anew, max, netSize);
+            cub::DeviceReduce::Max(d_tempStorage, d_tempStorageBytes, max, d_error, netSize * netSize);
 
             //copy error to CPU
             gpuErrchk( cudaMemcpy(&error, d_error, sizeof(double), cudaMemcpyDeviceToHost), A_h, Anew, A_d, max );
@@ -174,7 +204,7 @@ int main(int argc, char* argv[])
             //check for errors
             gpuErrchk( cudaGetLastError(), A_h, Anew, A_d, max );
         }
-        ++iteration;
+        iteration += 100;
     }
 
     if (toPrintResult) {
@@ -185,8 +215,8 @@ int main(int argc, char* argv[])
     }
 
     //find final error
-    findDifference <<< blockNum, threadsPerBlock >>> (A_d, Anew, max);
-    gpuErrchk( cub::DeviceReduce::Max(d_tempStorage, d_tempStorageBytes, max, d_error, netSize * netSize), A_h, Anew, A_d, max);
+    findDifference <<< blockNum, threadsPerBlock >>> (A_d, Anew, max, netSize);
+    cub::DeviceReduce::Max(d_tempStorage, d_tempStorageBytes, max, d_error, netSize * netSize);
 
     //copy error to CPU
     gpuErrchk(cudaMemcpy(&error, d_error, sizeof(double), cudaMemcpyDeviceToHost), A_h, Anew, A_d, max);
