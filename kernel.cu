@@ -188,22 +188,19 @@ int main(int argc, char* argv[])
         //get an error if happened
         gpuErrchk( cudaGetLastError(), A_h, Anew, A_d, max );
 
-        //every 100 iteration will be documented
-        if (iteration % 100 == 0) {
-            
-            //finding max error (max difference element from matrix A_d and Anew)
-            findDifference <<< blockNum, threadsPerBlock >>> (A_d, Anew, max, netSize);
-            cub::DeviceReduce::Max(d_tempStorage, d_tempStorageBytes, max, d_error, netSize * netSize);
+        //every 100 iteration will be documented 
+        //finding max error (max difference element from matrix A_d and Anew)
+        findDifference <<< blockNum, threadsPerBlock >>> (A_d, Anew, max, netSize);
+        cub::DeviceReduce::Max(d_tempStorage, d_tempStorageBytes, max, d_error, netSize * netSize);
 
-            //copy error to CPU
-            gpuErrchk( cudaMemcpy(&error, d_error, sizeof(double), cudaMemcpyDeviceToHost), A_h, Anew, A_d, max );
+        //copy error to CPU
+        gpuErrchk( cudaMemcpy(&error, d_error, sizeof(double), cudaMemcpyDeviceToHost), A_h, Anew, A_d, max );
 
-            //print report for this iteration
-            std::cout << "iteration " << iteration + 1 << "/" << maxIterations << " error = " << error << "\t(min " << minError << ")" << std::endl;
+        //print report for this iteration
+        std::cout << "iteration " << iteration + 1 << "/" << maxIterations << " error = " << error << "\t(min " << minError << ")" << std::endl;
 
-            //check for errors
-            gpuErrchk( cudaGetLastError(), A_h, Anew, A_d, max );
-        }
+        //check for errors
+        gpuErrchk( cudaGetLastError(), A_h, Anew, A_d, max );
         iteration += 100;
     }
 
